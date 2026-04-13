@@ -1,0 +1,8 @@
+{
+  "listen_addr": ":8080",
+  "steam_api_key": "your_steam_api_key",
+  "steam_id": "your_steam_id64_or_vanity",
+  "database_path": "steam_status.duckdb",
+  "collect_interval_seconds": 300,
+  "collect_on_start": true
+}

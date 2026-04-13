@@ -1,0 +1,10 @@
+.git
+.gitignore
+steam_status.duckdb
+steam_status.duckdb.wal
+tmp
+dist
+bin
+.DS_Store
+Dockerfile
+README.md
