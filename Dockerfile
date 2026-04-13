@@ -2,12 +2,15 @@ FROM golang:1.26 AS build
 
 WORKDIR /src
 
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o /out/steam-watcher ./cmd/server
+RUN CGO_ENABLED=1 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/steam-watcher ./cmd/server
 
 
 FROM debian:bookworm-slim
