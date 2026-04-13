@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"fmt"
 	"html/template"
@@ -49,6 +50,13 @@ func NewServer(cfg config.Config, db *store.Store, collector *app.Collector) *Se
 	e.Logger = slog.Default().With("component", "http")
 	e.Use(middleware.Recover())
 	e.Use(logx.GetEchoLogger(e.Logger))
+	if cfg.Auth.Enable {
+		e.Use(middleware.BasicAuth(func(_ *echo.Context, username, password string) (bool, error) {
+			usernameOK := subtle.ConstantTimeCompare([]byte(username), []byte(cfg.Auth.Username)) == 1
+			passwordOK := subtle.ConstantTimeCompare([]byte(password), []byte(cfg.Auth.Password)) == 1
+			return usernameOK && passwordOK, nil
+		}))
+	}
 
 	server := &Server{
 		echo:           e,

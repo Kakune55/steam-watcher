@@ -25,7 +25,12 @@
   "steam_id": "your_steam_id64_or_vanity",
   "database_path": "steam_status.duckdb",
   "collect_interval_seconds": 300,
-  "collect_on_start": true
+  "collect_on_start": true,
+  "auth": {
+    "enable": false,
+    "username": "admin",
+    "password": "change_me"
+  }
 }
 ```
 
@@ -38,8 +43,13 @@
 - `DATABASE_PATH`
 - `COLLECT_INTERVAL_SECONDS`
 - `COLLECT_ON_START`
+- `AUTH_ENABLE`
+- `AUTH_USERNAME`
+- `AUTH_PASSWORD`
 
 兼容旧配置：`DUCKDB_PATH` 也可以用来指定数据库路径。
+
+当 `auth.enable` 为 `true` 时，服务会对整个 Web 页面和 API 启用 HTTP Basic Auth。`auth.username` 和 `auth.password` 需要同时配置；默认 `auth.enable` 为 `false`，保持未开启鉴权的兼容行为。
 
 ## 运行
 

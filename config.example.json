@@ -4,5 +4,10 @@
   "steam_id": "your_steam_id64_or_vanity",
   "database_path": "steam_status.duckdb",
   "collect_interval_seconds": 300,
-  "collect_on_start": true
+  "collect_on_start": true,
+  "auth": {
+    "enable": false,
+    "username": "admin",
+    "password": "change_me"
+  }
 }

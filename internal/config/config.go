@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+type AuthConfig struct {
+	Enable   bool   `json:"enable"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type Config struct {
 	ConfigPath      string `json:"-"`
 	ListenAddr      string
@@ -17,15 +23,17 @@ type Config struct {
 	DatabasePath    string
 	CollectInterval time.Duration
 	CollectOnStart  bool
+	Auth            AuthConfig
 }
 
 type fileConfig struct {
-	ListenAddr             string `json:"listen_addr"`
-	SteamAPIKey            string `json:"steam_api_key"`
-	SteamIDInput           string `json:"steam_id"`
-	DatabasePath           string `json:"database_path"`
-	CollectIntervalSeconds int    `json:"collect_interval_seconds"`
-	CollectOnStart         *bool  `json:"collect_on_start"`
+	ListenAddr             string     `json:"listen_addr"`
+	SteamAPIKey            string     `json:"steam_api_key"`
+	SteamIDInput           string     `json:"steam_id"`
+	DatabasePath           string     `json:"database_path"`
+	CollectIntervalSeconds int        `json:"collect_interval_seconds"`
+	CollectOnStart         *bool      `json:"collect_on_start"`
+	Auth                   AuthConfig `json:"auth"`
 }
 
 func Load() (Config, error) {
@@ -39,6 +47,11 @@ func Load() (Config, error) {
 		DatabasePath:    getEnvAny([]string{"DATABASE_PATH", "DUCKDB_PATH"}, "steam_status.duckdb"),
 		CollectInterval: time.Duration(getEnvInt("COLLECT_INTERVAL_SECONDS", 300)) * time.Second,
 		CollectOnStart:  getEnvBool("COLLECT_ON_START", true),
+		Auth: AuthConfig{
+			Enable:   getEnvBool("AUTH_ENABLE", false),
+			Username: os.Getenv("AUTH_USERNAME"),
+			Password: os.Getenv("AUTH_PASSWORD"),
+		},
 	}
 
 	if err := applyFileConfig(&cfg, configPath); err != nil {
@@ -53,6 +66,9 @@ func Load() (Config, error) {
 	}
 	if cfg.CollectInterval <= 0 {
 		return Config{}, fmt.Errorf("COLLECT_INTERVAL_SECONDS must be greater than 0")
+	}
+	if cfg.Auth.Enable && ((cfg.Auth.Username == "") != (cfg.Auth.Password == "") || cfg.Auth.Username == "") {
+		return Config{}, fmt.Errorf("auth.enable is true, but auth.username and auth.password are not both set")
 	}
 
 	return cfg, nil
@@ -89,6 +105,15 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 	if fileCfg.CollectOnStart != nil && os.Getenv("COLLECT_ON_START") == "" {
 		cfg.CollectOnStart = *fileCfg.CollectOnStart
+	}
+	if os.Getenv("AUTH_ENABLE") == "" {
+		cfg.Auth.Enable = fileCfg.Auth.Enable
+	}
+	if fileCfg.Auth.Username != "" && os.Getenv("AUTH_USERNAME") == "" {
+		cfg.Auth.Username = fileCfg.Auth.Username
+	}
+	if fileCfg.Auth.Password != "" && os.Getenv("AUTH_PASSWORD") == "" {
+		cfg.Auth.Password = fileCfg.Auth.Password
 	}
 
 	return nil
