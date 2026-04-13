@@ -1,4 +1,4 @@
-FROM golang:1.26 AS build
+FROM golang:1.26-trixie AS build
 
 WORKDIR /src
 
@@ -13,10 +13,10 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/steam-watcher ./cmd/server
 
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates tzdata \
+	&& apt-get install -y --no-install-recommends ca-certificates tzdata libstdc++6 \
 	&& rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -1,3 +1,4 @@
 config.json
 steam_status.duckdb
 steam_status.duckdb.*
+.*
