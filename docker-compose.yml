@@ -1,0 +1,24 @@
+services:
+  steam-watcher:
+    image: kakune55/steam-watcher:latest
+    container_name: steam-watcher
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ADDR: ":8080"
+      DATABASE_PATH: /data/steam_status.duckdb
+      STEAM_API_KEY: your_steam_api_key
+      STEAM_ID64: your_steam_id64_or_vanity
+      COLLECT_INTERVAL_SECONDS: "300"
+      COLLECT_ON_START: "true"
+      AUTH_ENABLE: "false"
+      AUTH_USERNAME: admin
+      AUTH_PASSWORD: change_me
+    volumes:
+      - ./data:/data
+    # If you prefer config.json instead of environment variables, uncomment below:
+    # volumes:
+    #   - ./config.json:/app/config.json:ro
+    #   - ./data:/data
+

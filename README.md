@@ -1,5 +1,8 @@
 # Steam Watcher
 
+> 老大哥正在看着你。
+> Big Brother is Watching You.
+
 一个轻量的 Steam 好友状态采集器，使用 Go + Echo + DuckDB 构建。
 
 它会定期采集好友在线状态、保存历史快照，并提供一个简洁的 Web 页面查看最新状态、采集记录和历史视图。
@@ -97,3 +100,13 @@ docker run --rm -p 8080:8080 \
   -v $(pwd)/data:/data \
   steam-watcher
 ```
+
+使用 Docker Compose：
+
+```bash
+docker compose up -d --build
+```
+
+仓库内已提供 `docker-compose.yml`，默认通过环境变量配置服务。启动前请至少把其中的 `STEAM_API_KEY` 和 `STEAM_ID64` 改成你自己的值；如果要开启基础鉴权，把 `AUTH_ENABLE` 改为 `true`，并设置 `AUTH_USERNAME`、`AUTH_PASSWORD`。
+
+如果你更想使用 `config.json`，也可以按 `docker-compose.yml` 里的注释改成挂载配置文件。
