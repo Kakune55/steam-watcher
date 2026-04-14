@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Steam Watcher Settings</title>
+  <link rel="stylesheet" href="/static/common.css">
+  <link rel="stylesheet" href="/static/settings.css">
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">Steam Watcher</div>
+        <h1>设置与系统状态</h1>
+      </div>
+      <div class="topbar-actions">
+        <a href="/" class="button secondary">返回仪表盘</a>
+        <button type="button" id="refresh-status-button" class="button">刷新状态</button>
+      </div>
+    </header>
+
+    <section class="stats">
+      <div class="stat">
+        <div class="stat-label">配置文件</div>
+        <div class="stat-value" id="config-path">{{ .Settings.ConfigPath }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">环境变量覆盖</div>
+        <div class="stat-value" id="override-count">{{ len .Settings.EnvironmentOverrides }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">数据库大小</div>
+        <div class="stat-value" id="db-size">-</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Goroutines</div>
+        <div class="stat-value" id="goroutines">-</div>
+      </div>
+    </section>
+
+    <div class="content">
+      <div class="stack">
+        <section class="section">
+          <div class="section-head">
+            <div class="section-title">配置编辑</div>
+          </div>
+          <div class="section-body">
+            <form id="settings-form">
+              <div class="form-grid">
+                <div class="field">
+                  <label for="listen_addr">listen_addr</label>
+                  <input id="listen_addr" name="listen_addr" type="text" required>
+                </div>
+                <div class="field">
+                  <label for="database_path">database_path</label>
+                  <input id="database_path" name="database_path" type="text" required>
+                </div>
+                <div class="field full">
+                  <label for="steam_api_key">steam_api_key</label>
+                  <input id="steam_api_key" name="steam_api_key" type="password" required>
+                </div>
+                <div class="field full">
+                  <label for="steam_id">steam_id</label>
+                  <input id="steam_id" name="steam_id" type="text" required>
+                </div>
+                <div class="field">
+                  <label for="collect_interval_seconds">collect_interval_seconds</label>
+                  <input id="collect_interval_seconds" name="collect_interval_seconds" type="number" min="1" required>
+                </div>
+                <div class="field">
+                  <label>collect_on_start</label>
+                  <label class="switch">
+                    <input id="collect_on_start" name="collect_on_start" type="checkbox">
+                    <span>启动时立即采集一次</span>
+                  </label>
+                </div>
+                <div class="field">
+                  <label>auth.enable</label>
+                  <label class="switch">
+                    <input id="auth_enable" name="auth_enable" type="checkbox">
+                    <span>启用 Basic Auth</span>
+                  </label>
+                </div>
+                <div class="field">
+                  <label for="auth_username">auth.username</label>
+                  <input id="auth_username" name="auth_username" type="text">
+                </div>
+                <div class="field full">
+                  <label for="auth_password">auth.password</label>
+                  <input id="auth_password" name="auth_password" type="password">
+                </div>
+              </div>
+              <div class="info-box" id="override-list">正在读取环境变量覆盖信息...</div>
+              <div class="actions">
+                <button type="submit" class="button">保存配置</button>
+                <button type="button" class="button secondary" id="reload-settings-button">重新读取</button>
+              </div>
+              <div class="message" id="settings-message"></div>
+            </form>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head">
+            <div class="section-title">数据导入 / 导出</div>
+          </div>
+          <div class="section-body">
+            <div class="actions">
+              <button type="button" class="button secondary" data-export-format="duckdb">导出 DuckDB</button>
+              <button type="button" class="button secondary" data-export-format="json">导出 JSON</button>
+              <button type="button" class="button secondary" data-export-format="csv">导出 CSV ZIP</button>
+            </div>
+
+            <div class="upload-row">
+              <input id="import-file" type="file" accept=".json,.zip,.csv.zip">
+              <select id="import-format">
+                <option value="json">JSON</option>
+                <option value="csv">CSV ZIP</option>
+              </select>
+              <button type="button" class="button danger" id="import-button">导入并覆盖</button>
+            </div>
+            <div class="message" id="import-message"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="section">
+        <div class="section-head">
+          <div class="section-title">系统状态</div>
+        </div>
+        <div class="section-body">
+          <section class="stats" style="margin-top: 0;">
+            <div class="stat">
+              <div class="stat-label">Snapshots</div>
+              <div class="stat-value" id="snapshot-count">-</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Runs</div>
+              <div class="stat-value" id="run-count">-</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Collector</div>
+              <div class="stat-value" id="collector-running">-</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Heap Alloc</div>
+              <div class="stat-value" id="heap-alloc">-</div>
+            </div>
+          </section>
+
+          <div class="meta-list" id="runtime-list"></div>
+          <div class="run-list" id="recent-runs"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/static/settings.js" defer></script>
+</body>
+</html>

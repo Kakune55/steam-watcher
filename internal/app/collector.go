@@ -32,6 +32,12 @@ type CollectResult struct {
 	FetchedCount int       `json:"fetched_count"`
 }
 
+type Status struct {
+	Running                bool  `json:"running"`
+	CollectIntervalSeconds int64 `json:"collect_interval_seconds"`
+	CollectOnStart         bool  `json:"collect_on_start"`
+}
+
 func NewCollector(cfg config.Config, db *store.Store) *Collector {
 	return &Collector{
 		cfg:    cfg,
@@ -177,6 +183,16 @@ func (c *Collector) notifyChange() {
 	c.mu.Unlock()
 	if fn != nil {
 		fn()
+	}
+}
+
+func (c *Collector) Status() Status {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return Status{
+		Running:                c.running,
+		CollectIntervalSeconds: int64(c.cfg.CollectInterval / time.Second),
+		CollectOnStart:         c.cfg.CollectOnStart,
 	}
 }
 

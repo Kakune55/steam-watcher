@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,6 +36,8 @@ type fileConfig struct {
 	CollectOnStart         *bool      `json:"collect_on_start"`
 	Auth                   AuthConfig `json:"auth"`
 }
+
+type EditableConfig = fileConfig
 
 func Load() (Config, error) {
 	configPath := getEnv("CONFIG_PATH", "config.json")
@@ -119,6 +122,90 @@ func applyFileConfig(cfg *Config, path string) error {
 	return nil
 }
 
+func (cfg Config) Editable() EditableConfig {
+	return EditableConfig{
+		ListenAddr:             cfg.ListenAddr,
+		SteamAPIKey:            cfg.SteamAPIKey,
+		SteamIDInput:           cfg.SteamIDInput,
+		DatabasePath:           cfg.DatabasePath,
+		CollectIntervalSeconds: int(cfg.CollectInterval / time.Second),
+		CollectOnStart:         boolPtr(cfg.CollectOnStart),
+		Auth:                   cfg.Auth,
+	}
+}
+
+func (cfg Config) EnvironmentOverrides() map[string]string {
+	overrides := map[string]string{}
+
+	addOverride := func(keys ...string) {
+		for _, key := range keys {
+			if value := os.Getenv(key); value != "" {
+				overrides[key] = value
+			}
+		}
+	}
+
+	addOverride("APP_ADDR")
+	addOverride("STEAM_API_KEY")
+	addOverride("STEAM_ID64")
+	addOverride("DATABASE_PATH", "DUCKDB_PATH")
+	addOverride("COLLECT_INTERVAL_SECONDS")
+	addOverride("COLLECT_ON_START")
+	addOverride("AUTH_ENABLE")
+	addOverride("AUTH_USERNAME")
+	addOverride("AUTH_PASSWORD")
+
+	return overrides
+}
+
+func ValidateEditable(path string, editable EditableConfig) error {
+	if strings.TrimSpace(editable.ListenAddr) == "" {
+		return fmt.Errorf("listen_addr is required")
+	}
+	if strings.TrimSpace(editable.SteamAPIKey) == "" {
+		return fmt.Errorf("steam_api_key is required")
+	}
+	if strings.TrimSpace(editable.SteamIDInput) == "" {
+		return fmt.Errorf("steam_id is required")
+	}
+	if strings.TrimSpace(editable.DatabasePath) == "" {
+		return fmt.Errorf("database_path is required")
+	}
+	if editable.CollectIntervalSeconds <= 0 {
+		return fmt.Errorf("collect_interval_seconds must be greater than 0")
+	}
+	if editable.Auth.Enable {
+		username := strings.TrimSpace(editable.Auth.Username)
+		password := strings.TrimSpace(editable.Auth.Password)
+		if username == "" || password == "" {
+			return fmt.Errorf("auth.username and auth.password are required when auth.enable is true")
+		}
+	}
+
+	// Resolve the database path to make sure relative-path settings remain valid.
+	_ = resolveConfigRelativePath(path, editable.DatabasePath)
+
+	return nil
+}
+
+func SaveEditable(path string, editable EditableConfig) error {
+	if err := ValidateEditable(path, editable); err != nil {
+		return err
+	}
+
+	content, err := json.MarshalIndent(editable, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	content = append(content, '\n')
+
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		return fmt.Errorf("write config file %s: %w", path, err)
+	}
+
+	return nil
+}
+
 func resolveConfigRelativePath(configPath, value string) string {
 	if filepath.IsAbs(value) {
 		return value
@@ -164,4 +251,8 @@ func getEnvBool(key string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
