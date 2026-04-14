@@ -931,7 +931,11 @@
     }
 
     function isOnline(item) {
-      return item.persona_state === 1 || isPlaying(item);
+      return Number(item?.persona_state) >= 1 || isPlaying(item);
+    }
+
+    function isOffline(item) {
+      return !isPlaying(item) && !isOnline(item);
     }
 
     function toneClass(item) {
@@ -944,10 +948,7 @@
       if (isPlaying(item)) {
         return `正在玩：${item.game_name.String}`;
       }
-      if (item.persona_state === 1) {
-        return "在线";
-      }
-      if (item.last_logoff_at?.Valid) {
+      if (isOffline(item) && item.last_logoff_at?.Valid) {
         return `上次在线 ${relativeTime(item.last_logoff_at.Time)} 前`;
       }
       return item.persona_state_text || "离线";
@@ -1206,7 +1207,7 @@
       const total = items.length;
       const playingItems = items.filter(isPlaying).sort(compareByName);
       const onlineItems = items.filter(item => !isPlaying(item) && isOnline(item)).sort(compareByName);
-      const offlineItems = items.filter(item => !isPlaying(item) && !isOnline(item)).sort(compareByLastLogoffDesc);
+      const offlineItems = items.filter(isOffline).sort(compareByLastLogoffDesc);
 
       statTotal.textContent = String(total);
       statOnline.textContent = String(playingItems.length + onlineItems.length);
@@ -1257,7 +1258,7 @@
     function cellStateClass(item) {
       if (!item) return "is-empty";
       if (isPlaying(item)) return "is-playing";
-      if (item.persona_state === 1) return "is-online";
+      if (isOnline(item)) return "is-online";
       return "is-offline";
     }
 
@@ -1421,6 +1422,7 @@
             endAt: points[0].capturedAtDate,
             state: "is-empty",
             gameName: "",
+            stateText: "",
             samples: []
           });
         }
@@ -1433,6 +1435,7 @@
             endAt: nextPoint ? nextPoint.capturedAtDate : dayEnd,
             state: cellStateClass(point),
             gameName: point.game_name?.Valid ? point.game_name.String : "",
+            stateText: point.persona_state_text || "离线",
             samples: [point]
           });
         }
@@ -1444,6 +1447,7 @@
         if (
           last &&
           last.state === segment.state &&
+          last.stateText === segment.stateText &&
           last.gameName === segment.gameName &&
           last.endAt.getTime() === segment.startAt.getTime()
         ) {
@@ -1452,6 +1456,19 @@
           continue;
         }
         merged.push(segment);
+      }
+
+      function segmentTitle(segment) {
+        if (segment.state === "is-playing") {
+          return `正在玩：${segment.gameName}`;
+        }
+        if (segment.state === "is-online") {
+          return segment.stateText || "在线";
+        }
+        if (segment.state === "is-offline") {
+          return segment.stateText || "离线";
+        }
+        return "无采样";
       }
 
       const totalMs = Math.max(1, dayEnd.getTime() - dayStart.getTime());
@@ -1467,26 +1484,14 @@
           : segment.state === "is-online"
             ? "day-summary-online"
             : "day-summary-offline";
-        const title = segment.state === "is-playing"
-          ? `正在玩：${segment.gameName}`
-          : segment.state === "is-online"
-            ? "在线"
-            : segment.state === "is-offline"
-              ? "离线"
-              : "无采样";
+        const title = segmentTitle(segment);
         const tip = `${formatClock(segment.startAt)} - ${segment.endAt.getTime() === dayEnd.getTime() ? (isCurrentDay ? "至今" : "24:00") : formatClock(segmentEnd)} | ${title}`;
         return `<div class="day-summary-segment ${segmentClass}" title="${escapeHTML(tip)}" style="width:${widthPercent}%"></div>`;
       }).join("");
 
       const itemsHTML = merged.map(segment => {
         const titleClass = segment.state === "is-empty" ? "is-offline" : segment.state;
-        const title = segment.state === "is-playing"
-          ? `正在玩：${segment.gameName}`
-          : segment.state === "is-online"
-            ? "在线"
-            : segment.state === "is-offline"
-              ? "离线"
-              : "无采样";
+        const title = segmentTitle(segment);
         const segmentEnd = segment.endAt.getTime() === dayEnd.getTime() ? effectiveDayEnd : segment.endAt;
         const durationMs = Math.max(0, segmentEnd.getTime() - segment.startAt.getTime());
 
@@ -1542,7 +1547,7 @@
           bucket.playing += 1;
           const gameName = item.game_name.String;
           bucket.games.set(gameName, (bucket.games.get(gameName) || 0) + 1);
-        } else if (item.persona_state === 1) {
+        } else if (isOnline(item)) {
           bucket.online += 1;
         } else {
           bucket.offline += 1;
