@@ -153,6 +153,12 @@
       top: 16px;
       max-height: calc(100vh - 32px);
       overflow: auto;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+
+    .history-panel::-webkit-scrollbar {
+      display: none;
     }
 
     .history-empty {
@@ -457,7 +463,7 @@
     .day-drilldown-head {
       display: flex;
       justify-content: space-between;
-      align-items: baseline;
+      align-items: center;
       gap: 12px;
       margin-bottom: 10px;
     }
@@ -470,6 +476,22 @@
     .day-drilldown-note {
       color: var(--muted);
       font-size: 12px;
+    }
+
+    .day-merge-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .day-merge-toggle input {
+      margin: 0;
+      accent-color: #8bc53f;
     }
 
     .day-summary-bar {
@@ -685,6 +707,11 @@
 
       .run-row {
         grid-template-columns: 1fr;
+      }
+
+      .day-drilldown-head {
+        align-items: flex-start;
+        flex-direction: column;
       }
     }
   </style>

@@ -14,6 +14,7 @@ let selectedView = "halfyear";
 let currentHistoryData = null;
 let currentDayData = null;
 let selectedDrillDate = "";
+let mergePresenceSegments = true;
 const friendRowNodes = new Map();
 let historyShell = null;
 let dashboardVersion = "";
@@ -114,6 +115,130 @@ function formatLocalDateKey(dateLike) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function isActiveTimelineState(segment) {
+  return segment.state === "is-online" || segment.state === "is-playing";
+}
+
+function mergeExactSegments(segments) {
+  const merged = [];
+  for (const segment of segments) {
+    const last = merged[merged.length - 1];
+    if (
+      last &&
+      last.state === segment.state &&
+      last.stateText === segment.stateText &&
+      last.gameName === segment.gameName &&
+      last.endAt.getTime() === segment.startAt.getTime()
+    ) {
+      last.endAt = segment.endAt;
+      last.samples.push(...segment.samples);
+      continue;
+    }
+    merged.push({
+      ...segment,
+      samples: [...segment.samples]
+    });
+  }
+  return merged;
+}
+
+function mergePresenceRelaxed(segments) {
+  const bridged = [];
+
+  for (let i = 0; i < segments.length; i += 1) {
+    const current = {
+      ...segments[i],
+      samples: [...segments[i].samples]
+    };
+
+    if (current.state === "is-playing" && current.gameName) {
+      let j = i + 1;
+      let absorbedUntil = i;
+      while (j < segments.length) {
+        const gap = [];
+        while (
+          j < segments.length &&
+          isActiveTimelineState(segments[j]) &&
+          !segments[j].gameName &&
+          (gap.length === 0
+            ? segments[j].startAt.getTime() === current.endAt.getTime()
+            : segments[j].startAt.getTime() === gap[gap.length - 1].endAt.getTime())
+        ) {
+          gap.push(segments[j]);
+          j += 1;
+        }
+        if (
+          gap.length === 0 ||
+          j >= segments.length ||
+          segments[j].state !== "is-playing" ||
+          segments[j].gameName !== current.gameName ||
+          segments[j].startAt.getTime() !== gap[gap.length - 1].endAt.getTime()
+        ) {
+          break;
+        }
+
+        current.endAt = segments[j].endAt;
+        for (const segment of gap) {
+          current.samples.push(...segment.samples);
+        }
+        current.samples.push(...segments[j].samples);
+        absorbedUntil = j;
+        j += 1;
+      }
+      if (absorbedUntil > i) {
+        bridged.push(current);
+        i = absorbedUntil;
+        continue;
+      }
+    }
+
+    bridged.push(current);
+  }
+
+  const merged = [];
+  for (const segment of bridged) {
+    const last = merged[merged.length - 1];
+    if (!last || last.endAt.getTime() !== segment.startAt.getTime()) {
+      merged.push(segment);
+      continue;
+    }
+
+    const bothOnlineLike = last.state === "is-online" && segment.state === "is-online";
+    const samePlayingGame = last.state === "is-playing" && segment.state === "is-playing" && last.gameName === segment.gameName;
+
+    if (bothOnlineLike || samePlayingGame) {
+      last.endAt = segment.endAt;
+      last.samples.push(...segment.samples);
+      if (!last.gameName && segment.gameName) {
+        last.gameName = segment.gameName;
+      }
+      if (bothOnlineLike && last.stateText !== segment.stateText) {
+        last.stateText = "在线 / 离开";
+      }
+      continue;
+    }
+
+    merged.push(segment);
+  }
+
+  return merged;
+}
+
+function summarizeSegmentStateText(segment) {
+  const labels = [];
+  const seen = new Set();
+  for (const sample of segment.samples ?? []) {
+    const label = String(sample?.persona_state_text || "").trim();
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  if (labels.length > 0) {
+    return labels.join(" / ");
+  }
+  return segment.stateText || (segment.state === "is-playing" ? "在线" : "离线");
 }
 
 function compareByName(a, b) {
@@ -555,22 +680,8 @@ function renderDayDrilldown(data) {
     }
   }
 
-  const merged = [];
-  for (const segment of segments) {
-    const last = merged[merged.length - 1];
-    if (
-      last &&
-      last.state === segment.state &&
-      last.stateText === segment.stateText &&
-      last.gameName === segment.gameName &&
-      last.endAt.getTime() === segment.startAt.getTime()
-    ) {
-      last.endAt = segment.endAt;
-      last.samples.push(...segment.samples);
-      continue;
-    }
-    merged.push(segment);
-  }
+  const exactMerged = mergeExactSegments(segments);
+  const merged = mergePresenceSegments ? mergePresenceRelaxed(exactMerged) : exactMerged;
 
   function segmentTitle(segment) {
     if (segment.state === "is-playing") {
@@ -587,7 +698,7 @@ function renderDayDrilldown(data) {
 
   function segmentMeta(segment, durationText) {
     if (segment.state === "is-playing") {
-      const stateText = segment.stateText || "在线";
+      const stateText = summarizeSegmentStateText(segment);
       return `状态：${stateText} · 持续 ${durationText}`;
     }
     return `持续 ${durationText}`;
@@ -638,8 +749,14 @@ function renderDayDrilldown(data) {
   return `
     <section class="day-drilldown">
       <div class="day-drilldown-head">
-        <div class="day-drilldown-title">当天明细</div>
-        <div class="day-drilldown-note">${escapeHTML(formatLocalDate(data.start, { year: "numeric", month: "numeric", day: "numeric" }))} · 24 小时粒度</div>
+        <div>
+          <div class="day-drilldown-title">当天明细</div>
+          <div class="day-drilldown-note">${escapeHTML(formatLocalDate(data.start, { year: "numeric", month: "numeric", day: "numeric" }))} · 24 小时粒度</div>
+        </div>
+        <label class="day-merge-toggle">
+          <input type="checkbox" data-merge-presence-toggle ${mergePresenceSegments ? "checked" : ""}>
+          <span>合并在线状态</span>
+        </label>
       </div>
       <div class="day-summary-bar">${summaryBar}</div>
       <div class="day-timeline">${itemsHTML}</div>
@@ -885,6 +1002,16 @@ historyPanel.addEventListener("click", async (event) => {
     } catch (error) {
       showHistoryEmpty(error.message);
     }
+  }
+});
+
+historyPanel.addEventListener("change", (event) => {
+  const toggle = event.target.closest("[data-merge-presence-toggle]");
+  if (!toggle) return;
+
+  mergePresenceSegments = Boolean(toggle.checked);
+  if (currentHistoryData) {
+    renderHistoryPanel(currentHistoryData);
   }
 });
 
