@@ -276,19 +276,41 @@ func (s *Store) FriendHistory(friendSteamID string, start, end time.Time, bucket
 	if bucketUnit == "raw" {
 		rows := make([]FriendHistoryPoint, 0)
 		err := s.DB.Select(&rows, `
-			SELECT
-				captured_at AS bucket_start,
-				captured_at,
-				persona_state,
-				persona_state_text,
-				game_name,
-				game_app_id
-			FROM friend_snapshots
-			WHERE friend_steam_id = ?
-			  AND captured_at >= ?
-			  AND captured_at < ?
+			WITH boundary_point AS (
+				SELECT
+					captured_at AS bucket_start,
+					captured_at,
+					persona_state,
+					persona_state_text,
+					game_name,
+					game_app_id
+				FROM friend_snapshots
+				WHERE friend_steam_id = ?
+				  AND captured_at < ?
+				ORDER BY captured_at DESC
+				LIMIT 1
+			),
+			range_points AS (
+				SELECT
+					captured_at AS bucket_start,
+					captured_at,
+					persona_state,
+					persona_state_text,
+					game_name,
+					game_app_id
+				FROM friend_snapshots
+				WHERE friend_steam_id = ?
+				  AND captured_at >= ?
+				  AND captured_at < ?
+			)
+			SELECT *
+			FROM (
+				SELECT * FROM boundary_point
+				UNION ALL
+				SELECT * FROM range_points
+			)
 			ORDER BY captured_at
-		`, friendSteamID, start, end)
+		`, friendSteamID, start, friendSteamID, start, end)
 		return rows, err
 	}
 

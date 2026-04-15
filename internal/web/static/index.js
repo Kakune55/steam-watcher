@@ -539,9 +539,14 @@ function renderDayDrilldown(data) {
     for (let i = 0; i < points.length; i += 1) {
       const point = points[i];
       const nextPoint = points[i + 1];
+      const startAt = point.capturedAtDate < dayStart ? dayStart : point.capturedAtDate;
+      const endAt = nextPoint ? nextPoint.capturedAtDate : dayEnd;
+      if (endAt <= startAt) {
+        continue;
+      }
       segments.push({
-        startAt: point.capturedAtDate,
-        endAt: nextPoint ? nextPoint.capturedAtDate : dayEnd,
+        startAt,
+        endAt,
         state: cellStateClass(point),
         gameName: point.game_name?.Valid ? point.game_name.String : "",
         stateText: point.persona_state_text || "离线",
@@ -580,6 +585,14 @@ function renderDayDrilldown(data) {
     return "无采样";
   }
 
+  function segmentMeta(segment, durationText) {
+    if (segment.state === "is-playing") {
+      const stateText = segment.stateText || "在线";
+      return `状态：${stateText} · 持续 ${durationText}`;
+    }
+    return `持续 ${durationText}`;
+  }
+
   const totalMs = Math.max(1, dayEnd.getTime() - dayStart.getTime());
   const isCurrentDay = formatLocalDateKey(dayStart) === formatLocalDateKey(new Date());
   const effectiveDayEnd = isCurrentDay && now < dayEnd ? now : dayEnd;
@@ -605,6 +618,7 @@ function renderDayDrilldown(data) {
     const durationMs = Math.max(0, segmentEnd.getTime() - segment.startAt.getTime());
 
     const durationText = formatDuration(durationMs);
+    const metaText = segmentMeta(segment, durationText);
     const startText = formatClock(segment.startAt);
     const endText = segment.endAt.getTime() === dayEnd.getTime()
       ? (isCurrentDay ? "至今" : "24:00")
@@ -615,7 +629,7 @@ function renderDayDrilldown(data) {
         <div class="timeline-time">${escapeHTML(startText)} - ${escapeHTML(endText)}</div>
         <div class="timeline-card ${titleClass}">
           <div class="timeline-title ${titleClass}">${escapeHTML(title)}</div>
-          <div class="timeline-meta">持续 ${durationText}</div>
+          <div class="timeline-meta">${escapeHTML(metaText)}</div>
         </div>
       </article>
     `;
