@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
@@ -18,7 +19,9 @@ import (
 )
 
 type Store struct {
-	DB *sqlx.DB
+	DB     *sqlx.DB
+	dbPath string
+	mu     sync.RWMutex
 }
 
 type Summary struct {
@@ -80,7 +83,10 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 
-	store := &Store{DB: db}
+	store := &Store{
+		DB:     db,
+		dbPath: path,
+	}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -137,6 +143,9 @@ func (s *Store) migrate() error {
 	return nil
 }
 func (s *Store) InsertRun(run Run) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	_, err := s.DB.NamedExec(`
 		INSERT INTO collection_runs (
 			run_id, owner_steam_id, started_at, finished_at, friend_count, fetched_count, status, error_message
@@ -148,6 +157,9 @@ func (s *Store) InsertRun(run Run) error {
 }
 
 func (s *Store) UpdateRun(run Run) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	_, err := s.DB.NamedExec(`
 		UPDATE collection_runs
 		SET finished_at = :finished_at,
@@ -179,6 +191,9 @@ func (s *Store) InsertSnapshots(rows []SnapshotRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	tx, err := s.DB.Beginx()
 	if err != nil {
@@ -413,7 +428,25 @@ func (s *Store) ExportBundle() (ExportBundle, error) {
 	}, nil
 }
 
+func (s *Store) ExportDuckDB() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, err := s.DB.Exec(`CHECKPOINT`); err != nil {
+		return nil, fmt.Errorf("checkpoint database: %w", err)
+	}
+
+	content, err := os.ReadFile(s.dbPath)
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
 func (s *Store) ReplaceAllData(bundle ExportBundle) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	tx, err := s.DB.BeginTxx(context.Background(), nil)
 	if err != nil {
 		return err

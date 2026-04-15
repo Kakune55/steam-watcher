@@ -378,7 +378,7 @@ func (s *Server) handleDataExport(c *echo.Context) error {
 		c.Response().Header().Set(echo.HeaderContentDisposition, contentDisposition(filename+".csv.zip"))
 		return c.Blob(http.StatusOK, "application/zip", content)
 	case "duckdb":
-		content, err := os.ReadFile(s.cfg.DatabasePath)
+		content, err := s.store.ExportDuckDB()
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
