@@ -725,8 +725,12 @@
       </div>
       <div class="topbar-actions">
         <div id="collectResult" class="collect-meta">采集间隔：{{ .Config.CollectInterval }}</div>
-        <a href="/settings" class="nav-link">设置</a>
-        <button id="collectButton" class="collect-button" type="button">立即采集</button>
+        <nav class="top-tabs" aria-label="主导航">
+          <a href="/" class="top-tab is-active">总览</a>
+          <a href="/insights" class="top-tab">分析</a>
+          <a href="/settings" class="top-tab">设置</a>
+        </nav>
+        <button id="collectButton" class="collect-button" type="button">更新</button>
       </div>
     </header>
 

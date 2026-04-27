@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Steam Watcher Insights</title>
+  <link rel="stylesheet" href="/static/common.css">
+  <link rel="stylesheet" href="/static/insights.css">
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">Steam Watcher</div>
+        <h1>统计洞察</h1>
+      </div>
+      <div class="topbar-actions">
+        <nav class="top-tabs" aria-label="主导航">
+          <a href="/" class="top-tab">总览</a>
+          <a href="/insights" class="top-tab is-active">分析</a>
+          <a href="/settings" class="top-tab">设置</a>
+        </nav>
+        <button type="button" id="refreshInsightsButton" class="button">刷新</button>
+      </div>
+    </header>
+
+    <section id="insightsPanel" class="section insights-page-panel">
+      <div class="empty">正在加载分析...</div>
+    </section>
+  </div>
+
+  <script src="/static/insights.js" defer></script>
+</body>
+</html>

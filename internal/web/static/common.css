@@ -82,6 +82,29 @@ select {
   justify-content: flex-end;
 }
 
+.top-tabs {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.top-tab {
+  padding: 9px 14px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.top-tab:first-child {
+  border-left: 0;
+}
+
+.top-tab.is-active {
+  background: #27405a;
+  color: var(--text);
+}
+
 .button,
 .collect-button,
 .nav-link {
@@ -194,5 +217,10 @@ select {
   .stats,
   .content {
     grid-template-columns: 1fr;
+  }
+
+  .top-tabs {
+    width: 100%;
+    overflow-x: auto;
   }
 }

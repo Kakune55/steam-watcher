@@ -120,11 +120,13 @@ func NewServer(cfg config.Config, db *store.Store, collector *app.Collector) *Se
 	e.StaticFS("/static", staticFS)
 
 	e.GET("/", server.handleIndex)
+	e.GET("/insights", server.handleInsightsPage)
 	e.GET("/settings", server.handleSettingsPage)
 	e.GET("/api/status/latest", server.handleLatestStatuses)
 	e.GET("/api/friends/:friendSteamID/history", server.handleFriendHistory)
 	e.GET("/api/runs", server.handleRuns)
 	e.GET("/api/dashboard", server.handleDashboard)
+	e.GET("/api/insights", server.handleInsights)
 	e.GET("/api/settings", server.handleGetSettings)
 	e.PUT("/api/settings", server.handleUpdateSettings)
 	e.GET("/api/system/status", server.handleSystemStatus)
@@ -178,6 +180,13 @@ func (s *Server) handleIndex(c *echo.Context) error {
 	})
 }
 
+func (s *Server) handleInsightsPage(c *echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMETextHTMLCharsetUTF8)
+	return s.templates.ExecuteTemplate(c.Response(), "insights.html", map[string]any{
+		"Config": s.cfg,
+	})
+}
+
 func (s *Server) handleSettingsPage(c *echo.Context) error {
 	payload := s.settingsPayload()
 	c.Response().Header().Set(echo.HeaderContentType, echo.MIMETextHTMLCharsetUTF8)
@@ -228,6 +237,44 @@ func (s *Server) handleRuns(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"items": payload.Runs})
+}
+
+func (s *Server) handleInsights(c *echo.Context) error {
+	tzOffsetMinutes, err := parseTZOffsetMinutes(c.QueryParam("tz_offset_minutes"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	rangeName := c.QueryParam("range")
+	if rangeName == "" {
+		rangeName = "week"
+	}
+
+	now := time.Now().UTC()
+	localNow := now.Add(time.Duration(tzOffsetMinutes) * time.Minute)
+	var localStart time.Time
+	localEnd := localNow
+	switch rangeName {
+	case "week":
+		localStart = startOfLocalWeek(localNow)
+	case "7d":
+		localStart = localNow.AddDate(0, 0, -7)
+	case "30d":
+		localStart = localNow.AddDate(0, 0, -30)
+	default:
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "range must be one of: week, 7d, 30d"})
+	}
+
+	start, end := localRangeToUTC(localStart, localEnd, tzOffsetMinutes)
+	insights, err := s.store.PlayInsights(start, end, tzOffsetMinutes)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"range":    rangeName,
+		"insights": insights,
+	})
 }
 
 func (s *Server) handleFriendHistory(c *echo.Context) error {
@@ -318,6 +365,15 @@ func localRangeToUTC(localStart, localEnd time.Time, offsetMinutes int) (time.Ti
 	end := time.Date(localEnd.Year(), localEnd.Month(), localEnd.Day(), localEnd.Hour(), localEnd.Minute(), localEnd.Second(), localEnd.Nanosecond(), time.UTC)
 	offset := time.Duration(offsetMinutes) * time.Minute
 	return start.Add(-offset), end.Add(-offset)
+}
+
+func startOfLocalWeek(t time.Time) time.Time {
+	dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	weekday := int(dayStart.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+	return dayStart.AddDate(0, 0, 1-weekday)
 }
 
 func (s *Server) handleCollect(c *echo.Context) error {

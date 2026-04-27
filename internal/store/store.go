@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,6 +71,48 @@ type FriendHistoryPoint struct {
 	PersonaStateText string         `db:"persona_state_text" json:"persona_state_text"`
 	GameName         sql.NullString `db:"game_name" json:"game_name"`
 	GameAppID        sql.NullInt64  `db:"game_app_id" json:"game_app_id"`
+}
+
+type InsightFriend struct {
+	FriendSteamID string        `json:"friend_steam_id"`
+	PersonaName   string        `json:"persona_name"`
+	AvatarURL     string        `json:"avatar_url"`
+	ProfileURL    string        `json:"profile_url"`
+	PlayMs        int64         `json:"play_ms"`
+	TopGame       string        `json:"top_game"`
+	TopGames      []InsightGame `json:"top_games"`
+	HourBuckets   []int64       `json:"hour_buckets"`
+}
+
+type InsightGame struct {
+	GameName    string `json:"game_name"`
+	GameAppID   int64  `json:"game_app_id"`
+	PlayerCount int    `json:"player_count"`
+	PlayMs      int64  `json:"play_ms"`
+}
+
+type InsightCoopGame struct {
+	GameName   string `json:"game_name"`
+	GameAppID  int64  `json:"game_app_id"`
+	Moments    int    `json:"moments"`
+	MaxPlayers int    `json:"max_players"`
+}
+
+type InsightPeak struct {
+	CapturedAt  time.Time `json:"captured_at"`
+	PlayerCount int       `json:"player_count"`
+}
+
+type PlayInsights struct {
+	Start             time.Time         `json:"start"`
+	End               time.Time         `json:"end"`
+	TotalPlayMs       int64             `json:"total_play_ms"`
+	ActiveFriendCount int               `json:"active_friend_count"`
+	TopPlayers        []InsightFriend   `json:"top_players"`
+	PopularGames      []InsightGame     `json:"popular_games"`
+	CoopGames         []InsightCoopGame `json:"coop_games"`
+	Peak              InsightPeak       `json:"peak"`
+	HourBuckets       []int64           `json:"hour_buckets"`
 }
 
 type ExportBundle struct {
@@ -370,6 +414,80 @@ func (s *Store) FriendHistory(friendSteamID string, start, end time.Time, bucket
 	return rows, err
 }
 
+func (s *Store) PlayInsights(start, end time.Time, tzOffsetMinutes int) (PlayInsights, error) {
+	rows := make([]SnapshotRow, 0)
+	err := s.DB.Select(&rows, `
+		WITH boundary_ranked AS (
+			SELECT
+				run_id,
+				captured_at,
+				owner_steam_id,
+				friend_steam_id,
+				persona_name,
+				persona_state,
+				persona_state_text,
+				game_name,
+				game_app_id,
+				avatar_url,
+				profile_url,
+				last_logoff_at,
+				row_number() OVER (
+					PARTITION BY friend_steam_id
+					ORDER BY captured_at DESC
+				) AS rn
+			FROM friend_snapshots
+			WHERE captured_at < ?
+		),
+		boundary_points AS (
+			SELECT
+				run_id,
+				captured_at,
+				owner_steam_id,
+				friend_steam_id,
+				persona_name,
+				persona_state,
+				persona_state_text,
+				game_name,
+				game_app_id,
+				avatar_url,
+				profile_url,
+				last_logoff_at
+			FROM boundary_ranked
+			WHERE rn = 1
+		),
+		range_points AS (
+			SELECT
+				run_id,
+				captured_at,
+				owner_steam_id,
+				friend_steam_id,
+				persona_name,
+				persona_state,
+				persona_state_text,
+				game_name,
+				game_app_id,
+				avatar_url,
+				profile_url,
+				last_logoff_at
+			FROM friend_snapshots
+			WHERE captured_at >= ?
+			  AND captured_at < ?
+		)
+		SELECT *
+		FROM (
+			SELECT * FROM boundary_points
+			UNION ALL
+			SELECT * FROM range_points
+		)
+		ORDER BY friend_steam_id ASC, captured_at ASC
+	`, start, start, end)
+	if err != nil {
+		return PlayInsights{}, err
+	}
+
+	return buildPlayInsights(rows, start, end, tzOffsetMinutes), nil
+}
+
 func (s *Store) Summary() (Summary, error) {
 	var summary Summary
 	err := s.DB.Get(&summary, `
@@ -378,6 +496,401 @@ func (s *Store) Summary() (Summary, error) {
 			(SELECT COUNT(*) FROM friend_snapshots) AS snapshot_count
 	`)
 	return summary, err
+}
+
+type insightFriendAgg struct {
+	id          string
+	name        string
+	avatarURL   string
+	profileURL  string
+	playMs      int64
+	games       map[string]int64
+	hourBuckets []int64
+}
+
+type insightGameAgg struct {
+	name    string
+	appID   int64
+	playMs  int64
+	players map[string]struct{}
+}
+
+type insightCoopAgg struct {
+	name       string
+	appID      int64
+	moments    int
+	maxPlayers int
+}
+
+func buildPlayInsights(rows []SnapshotRow, start, end time.Time, tzOffsetMinutes int) PlayInsights {
+	const maxSegment = 2 * time.Hour
+
+	insights := PlayInsights{
+		Start:       start,
+		End:         end,
+		HourBuckets: make([]int64, 24),
+	}
+	if !end.After(start) {
+		return insights
+	}
+
+	byFriend := make(map[string][]SnapshotRow)
+	rangeRows := make([]SnapshotRow, 0)
+	for _, row := range rows {
+		byFriend[row.FriendSteamID] = append(byFriend[row.FriendSteamID], row)
+		if !row.CapturedAt.Before(start) && row.CapturedAt.Before(end) {
+			rangeRows = append(rangeRows, row)
+		}
+	}
+
+	friends := make(map[string]*insightFriendAgg)
+	games := make(map[string]*insightGameAgg)
+	for friendID, friendRows := range byFriend {
+		sort.Slice(friendRows, func(i, j int) bool {
+			return friendRows[i].CapturedAt.Before(friendRows[j].CapturedAt)
+		})
+
+		for i, row := range friendRows {
+			if !row.GameName.Valid || row.GameName.String == "" {
+				continue
+			}
+
+			segmentStart := maxTime(row.CapturedAt, start)
+			segmentEnd := end
+			if i+1 < len(friendRows) {
+				segmentEnd = minTime(friendRows[i+1].CapturedAt, end)
+			}
+			if !segmentEnd.After(segmentStart) {
+				continue
+			}
+			if segmentEnd.Sub(segmentStart) > maxSegment {
+				segmentEnd = segmentStart.Add(maxSegment)
+			}
+
+			durationMs := segmentEnd.Sub(segmentStart).Milliseconds()
+			gameKey := insightGameKey(row.GameName.String, row.GameAppID)
+			friend := getInsightFriend(friends, row)
+			game := getInsightGame(games, row)
+
+			friend.playMs += durationMs
+			friend.games[gameKey] += durationMs
+			addInsightHourBuckets(friend.hourBuckets, segmentStart, segmentEnd, tzOffsetMinutes)
+			game.playMs += durationMs
+			game.players[friendID] = struct{}{}
+			insights.TotalPlayMs += durationMs
+			addInsightHourBuckets(insights.HourBuckets, segmentStart, segmentEnd, tzOffsetMinutes)
+		}
+	}
+
+	insights.TopPlayers = topInsightFriends(friends, 5)
+	insights.PopularGames = topInsightGames(games, 5)
+	insights.ActiveFriendCount = activeInsightFriendCount(friends)
+	insights.Peak = insightPeak(rangeRows)
+	insights.CoopGames = topInsightCoopGames(rangeRows, 5)
+	return insights
+}
+
+func getInsightFriend(items map[string]*insightFriendAgg, row SnapshotRow) *insightFriendAgg {
+	item := items[row.FriendSteamID]
+	if item == nil {
+		item = &insightFriendAgg{
+			id:          row.FriendSteamID,
+			games:       make(map[string]int64),
+			hourBuckets: make([]int64, 24),
+		}
+		items[row.FriendSteamID] = item
+	}
+	item.name = row.PersonaName
+	if row.AvatarURL.Valid {
+		item.avatarURL = row.AvatarURL.String
+	}
+	if row.ProfileURL.Valid {
+		item.profileURL = row.ProfileURL.String
+	}
+	return item
+}
+
+func getInsightGame(items map[string]*insightGameAgg, row SnapshotRow) *insightGameAgg {
+	key := insightGameKey(row.GameName.String, row.GameAppID)
+	item := items[key]
+	if item == nil {
+		item = &insightGameAgg{
+			name:    row.GameName.String,
+			appID:   nullInt64Value(row.GameAppID),
+			players: make(map[string]struct{}),
+		}
+		items[key] = item
+	}
+	return item
+}
+
+func topInsightFriends(items map[string]*insightFriendAgg, limit int) []InsightFriend {
+	rows := make([]InsightFriend, 0, len(items))
+	for _, item := range items {
+		if item.playMs <= 0 {
+			continue
+		}
+		topGame := ""
+		var topGameMs int64
+		for game, playMs := range item.games {
+			if playMs > topGameMs || (playMs == topGameMs && game < topGame) {
+				topGame = game
+				topGameMs = playMs
+			}
+		}
+		rows = append(rows, InsightFriend{
+			FriendSteamID: item.id,
+			PersonaName:   item.name,
+			AvatarURL:     item.avatarURL,
+			ProfileURL:    item.profileURL,
+			PlayMs:        item.playMs,
+			TopGame:       insightGameName(topGame),
+			TopGames:      topFriendGames(item.games, 5),
+			HourBuckets:   append([]int64(nil), item.hourBuckets...),
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].PlayMs != rows[j].PlayMs {
+			return rows[i].PlayMs > rows[j].PlayMs
+		}
+		return rows[i].PersonaName < rows[j].PersonaName
+	})
+	return limitInsightFriends(rows, limit)
+}
+
+func topInsightGames(items map[string]*insightGameAgg, limit int) []InsightGame {
+	rows := make([]InsightGame, 0, len(items))
+	for _, item := range items {
+		if item.playMs <= 0 {
+			continue
+		}
+		rows = append(rows, InsightGame{
+			GameName:    item.name,
+			GameAppID:   item.appID,
+			PlayerCount: len(item.players),
+			PlayMs:      item.playMs,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].PlayerCount != rows[j].PlayerCount {
+			return rows[i].PlayerCount > rows[j].PlayerCount
+		}
+		if rows[i].PlayMs != rows[j].PlayMs {
+			return rows[i].PlayMs > rows[j].PlayMs
+		}
+		return rows[i].GameName < rows[j].GameName
+	})
+	return limitInsightGames(rows, limit)
+}
+
+func topFriendGames(items map[string]int64, limit int) []InsightGame {
+	rows := make([]InsightGame, 0, len(items))
+	for key, playMs := range items {
+		if playMs <= 0 {
+			continue
+		}
+		name, appID := insightGameParts(key)
+		rows = append(rows, InsightGame{
+			GameName:    name,
+			GameAppID:   appID,
+			PlayerCount: 1,
+			PlayMs:      playMs,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].PlayMs != rows[j].PlayMs {
+			return rows[i].PlayMs > rows[j].PlayMs
+		}
+		return rows[i].GameName < rows[j].GameName
+	})
+	return limitInsightGames(rows, limit)
+}
+
+func insightPeak(rows []SnapshotRow) InsightPeak {
+	type peakBucket struct {
+		capturedAt time.Time
+		players    map[string]struct{}
+	}
+	buckets := make(map[int64]*peakBucket)
+	for _, row := range rows {
+		if !row.GameName.Valid || row.GameName.String == "" {
+			continue
+		}
+		key := row.CapturedAt.UnixNano()
+		bucket := buckets[key]
+		if bucket == nil {
+			bucket = &peakBucket{
+				capturedAt: row.CapturedAt,
+				players:    make(map[string]struct{}),
+			}
+			buckets[key] = bucket
+		}
+		bucket.players[row.FriendSteamID] = struct{}{}
+	}
+
+	var peak InsightPeak
+	for _, bucket := range buckets {
+		count := len(bucket.players)
+		if count > peak.PlayerCount || (count == peak.PlayerCount && (peak.CapturedAt.IsZero() || bucket.capturedAt.Before(peak.CapturedAt))) {
+			peak = InsightPeak{CapturedAt: bucket.capturedAt, PlayerCount: count}
+		}
+	}
+	return peak
+}
+
+func topInsightCoopGames(rows []SnapshotRow, limit int) []InsightCoopGame {
+	type coopMoment struct {
+		name    string
+		appID   int64
+		players map[string]struct{}
+	}
+
+	moments := make(map[string]*coopMoment)
+	for _, row := range rows {
+		if !row.GameName.Valid || row.GameName.String == "" {
+			continue
+		}
+		key := strconv.FormatInt(row.CapturedAt.UnixNano(), 10) + "|" + insightGameKey(row.GameName.String, row.GameAppID)
+		moment := moments[key]
+		if moment == nil {
+			moment = &coopMoment{
+				name:    row.GameName.String,
+				appID:   nullInt64Value(row.GameAppID),
+				players: make(map[string]struct{}),
+			}
+			moments[key] = moment
+		}
+		moment.players[row.FriendSteamID] = struct{}{}
+	}
+
+	aggregates := make(map[string]*insightCoopAgg)
+	for _, moment := range moments {
+		count := len(moment.players)
+		if count < 2 {
+			continue
+		}
+		key := insightGameKeyFromValues(moment.name, moment.appID)
+		agg := aggregates[key]
+		if agg == nil {
+			agg = &insightCoopAgg{name: moment.name, appID: moment.appID}
+			aggregates[key] = agg
+		}
+		agg.moments += 1
+		if count > agg.maxPlayers {
+			agg.maxPlayers = count
+		}
+	}
+
+	result := make([]InsightCoopGame, 0, len(aggregates))
+	for _, agg := range aggregates {
+		result = append(result, InsightCoopGame{
+			GameName:   agg.name,
+			GameAppID:  agg.appID,
+			Moments:    agg.moments,
+			MaxPlayers: agg.maxPlayers,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Moments != result[j].Moments {
+			return result[i].Moments > result[j].Moments
+		}
+		if result[i].MaxPlayers != result[j].MaxPlayers {
+			return result[i].MaxPlayers > result[j].MaxPlayers
+		}
+		return result[i].GameName < result[j].GameName
+	})
+	return limitInsightCoopGames(result, limit)
+}
+
+func addInsightHourBuckets(buckets []int64, start, end time.Time, tzOffsetMinutes int) {
+	offset := time.Duration(tzOffsetMinutes) * time.Minute
+	for cursor := start; cursor.Before(end); {
+		local := cursor.Add(offset)
+		nextLocalHour := time.Date(local.Year(), local.Month(), local.Day(), local.Hour()+1, 0, 0, 0, time.UTC)
+		next := minTime(nextLocalHour.Add(-offset), end)
+		buckets[local.Hour()] += next.Sub(cursor).Milliseconds()
+		cursor = next
+	}
+}
+
+func insightGameKey(name string, appID sql.NullInt64) string {
+	return insightGameKeyFromValues(name, nullInt64Value(appID))
+}
+
+func insightGameKeyFromValues(name string, appID int64) string {
+	if appID > 0 {
+		return strconv.FormatInt(appID, 10) + "|" + name
+	}
+	return "name|" + name
+}
+
+func insightGameName(key string) string {
+	parts := strings.SplitN(key, "|", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return key
+}
+
+func insightGameParts(key string) (string, int64) {
+	parts := strings.SplitN(key, "|", 2)
+	if len(parts) != 2 {
+		return key, 0
+	}
+	appID, _ := strconv.ParseInt(parts[0], 10, 64)
+	return parts[1], appID
+}
+
+func nullInt64Value(value sql.NullInt64) int64 {
+	if value.Valid {
+		return value.Int64
+	}
+	return 0
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func limitInsightFriends(items []InsightFriend, limit int) []InsightFriend {
+	if len(items) <= limit {
+		return items
+	}
+	return items[:limit]
+}
+
+func limitInsightGames(items []InsightGame, limit int) []InsightGame {
+	if len(items) <= limit {
+		return items
+	}
+	return items[:limit]
+}
+
+func limitInsightCoopGames(items []InsightCoopGame, limit int) []InsightCoopGame {
+	if len(items) <= limit {
+		return items
+	}
+	return items[:limit]
+}
+
+func activeInsightFriendCount(items map[string]*insightFriendAgg) int {
+	count := 0
+	for _, item := range items {
+		if item.playMs > 0 {
+			count += 1
+		}
+	}
+	return count
 }
 
 func (s *Store) AllRuns() ([]Run, error) {
